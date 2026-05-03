@@ -32,22 +32,30 @@ func validBump(b string) bool {
 
 // New constructs and validates a Plan from the given releases and message.
 func New(releases map[string]string, message string) (*Plan, error) {
-	if len(releases) == 0 {
-		return nil, fmt.Errorf("releases: at least one component bump is required")
+	p := &Plan{Releases: releases, Message: message}
+	if err := validate(p); err != nil {
+		return nil, err
 	}
-	for name, bump := range releases {
+	return p, nil
+}
+
+func validate(p *Plan) error {
+	if len(p.Releases) == 0 {
+		return fmt.Errorf("releases: at least one component bump is required")
+	}
+	for name, bump := range p.Releases {
 		if name == "" {
-			return nil, fmt.Errorf("releases: component name must be non-empty")
+			return fmt.Errorf("releases: component name must be non-empty")
 		}
 		if bump == "" {
-			return nil, fmt.Errorf("releases.%s: bump must be non-empty", name)
+			return fmt.Errorf("releases.%s: bump must be non-empty", name)
 		}
 		if !validBump(bump) {
-			return nil, fmt.Errorf("releases.%s: %q is not one of [%s, %s, %s, %s]",
+			return fmt.Errorf("releases.%s: %q is not one of [%s, %s, %s, %s]",
 				name, bump, BumpMajor, BumpMinor, BumpPatch, BumpNone)
 		}
 	}
-	return &Plan{Releases: releases, Message: message}, nil
+	return nil
 }
 
 // Save writes p to path as YAML with 2-space indent. It refuses to overwrite

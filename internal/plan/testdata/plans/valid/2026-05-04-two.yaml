@@ -1,0 +1,4 @@
+releases:
+  agent: patch
+  helm: major
+message: Bump helm and agent
