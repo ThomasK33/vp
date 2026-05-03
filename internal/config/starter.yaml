@@ -1,0 +1,36 @@
+# vp.yaml — declares independently-versioned components and how vp manages plans.
+# All paths are interpreted relative to the directory containing this file.
+
+plans:
+  # Directory where pending plan files live.
+  dir: .version-plans
+
+  # What vp apply does to a plan after consuming it.
+  # One of: delete | archive
+  consumed: delete
+
+  # Where consumed plans are moved when consumed = archive. Required in that case.
+  # archive_dir: .version-plans/archive
+
+components:
+  # Each key under components is a component name. Use it in plan files
+  # (e.g. `releases: { cli: minor }`) and as the {component} reference in CI.
+  cli:
+    # Glob patterns matched against repo-relative paths from `git diff`.
+    # Doublestar (**) is supported. A file matching any glob marks the
+    # component as affected.
+    paths:
+      - "cli/**"
+      - "cmd/cli/**"
+
+    # The single file owning this component's canonical version string.
+    version:
+      file: "cli/package.json"
+      # One of: json | yaml | toml | text
+      format: "json"
+      # Dotted accessor inside the file. Ignored for the text format.
+      path: "version"
+
+    # Optional. Printed by `vp apply --dry-run` so CI can pipe it to `git tag`.
+    # Single {version} placeholder; not Go-template syntax.
+    tag: "cli-v{version}"
