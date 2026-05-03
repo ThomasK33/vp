@@ -11,8 +11,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThomasK33/vp/internal/config"
+	"github.com/ThomasK33/vp/internal/output"
+	"github.com/ThomasK33/vp/internal/plan"
 	"github.com/ThomasK33/vp/internal/semver"
+	jsonvf "github.com/ThomasK33/vp/internal/versionfile/json"
 	"github.com/ThomasK33/vp/internal/versionfile/text"
+	tomlvf "github.com/ThomasK33/vp/internal/versionfile/toml"
+	yamlvf "github.com/ThomasK33/vp/internal/versionfile/yaml"
 )
 
 var statusCmd = &cobra.Command{
@@ -40,8 +45,16 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		jsonOut, err := cmd.Flags().GetBool("json")
+		if err != nil {
+			return err
+		}
 
 		out := cmd.OutOrStdout()
+
+		if jsonOut {
+			return output.WriteStatus(out, buildStatusReport(cfg, pending, collapsed, showAll))
+		}
 
 		if len(pending) == 0 {
 			_, _ = fmt.Fprintln(out, "No pending plans.")
@@ -62,6 +75,72 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+func buildStatusReport(cfg *config.Config, pending []plan.Pending, collapsed map[string]semver.Bump, showAll bool) *output.StatusReport {
+	report := &output.StatusReport{
+		Pending:  make([]output.PendingPlan, 0, len(pending)),
+		Resolved: []output.ResolvedComponent{},
+	}
+	for _, p := range pending {
+		report.Pending = append(report.Pending, output.PendingPlan{
+			File:     filepath.Base(p.Path),
+			Releases: p.Plan.Releases,
+			Message:  p.Plan.Message,
+		})
+	}
+	names := sortedKeys(collapsed)
+	if showAll {
+		names = sortedKeys(cfg.Components)
+	}
+	for _, n := range names {
+		level := collapsed[n]
+		if level == "" {
+			level = semver.BumpNone
+		}
+		entry := output.ResolvedComponent{Component: n, Bump: string(level)}
+		if cur, ok := readVersion(cfg, n); ok {
+			entry.Current = cur
+			if level != semver.BumpNone {
+				if next, err := semver.Next(cur, level); err == nil {
+					entry.Next = next
+				}
+			}
+		}
+		report.Resolved = append(report.Resolved, entry)
+	}
+	return report
+}
+
+// readVersion returns the current version for the named component when its
+// version file is readable. The boolean is false when the format is unknown,
+// the file is missing, or the format-specific parser errors out — mirroring
+// the silent-fallback policy of the text-output path.
+func readVersion(cfg *config.Config, name string) (string, bool) {
+	comp, ok := cfg.Components[name]
+	if !ok {
+		return "", false
+	}
+	var (
+		v   string
+		err error
+	)
+	switch comp.Version.Format {
+	case config.FormatText:
+		v, err = text.Read(comp.Version.File)
+	case config.FormatJSON:
+		v, err = jsonvf.Read(comp.Version.File, comp.Version.Path)
+	case config.FormatYAML:
+		v, err = yamlvf.Read(comp.Version.File, comp.Version.Path)
+	case config.FormatTOML:
+		v, err = tomlvf.Read(comp.Version.File, comp.Version.Path)
+	default:
+		return "", false
+	}
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}
+
 func printSummary(out io.Writer, cfg *config.Config, collapsed map[string]semver.Bump, showAll bool) {
 	names := sortedKeys(collapsed)
 	if showAll {
@@ -77,17 +156,13 @@ func printSummary(out io.Writer, cfg *config.Config, collapsed map[string]semver
 	}
 }
 
-// formatSummaryLine renders one resolved-bump row. For text-format components
-// it appends current/next version info; for any other format (or when reading
-// the version file fails) it falls back to the bare "name: bump" form.
+// formatSummaryLine renders one resolved-bump row. When the component's
+// version file is readable in any supported format, it appends current/next
+// (or current alone for BumpNone); otherwise it falls back to "name: bump".
 func formatSummaryLine(cfg *config.Config, name string, level semver.Bump) string {
 	bare := fmt.Sprintf("%s: %s", name, level)
-	comp, ok := cfg.Components[name]
-	if !ok || comp.Version.Format != config.FormatText {
-		return bare
-	}
-	cur, err := text.Read(comp.Version.File)
-	if err != nil {
+	cur, ok := readVersion(cfg, name)
+	if !ok {
 		return bare
 	}
 	if level == semver.BumpNone {
@@ -111,5 +186,6 @@ func sortedKeys[V any](m map[string]V) []string {
 
 func init() {
 	statusCmd.Flags().Bool("all", false, "show every component from config, not just those with pending bumps")
+	statusCmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout")
 	rootCmd.AddCommand(statusCmd)
 }

@@ -1,12 +1,28 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+type applyJSON struct {
+	Changes  []applyChangeJSON `json:"changes"`
+	Consumed []string          `json:"consumed"`
+}
+
+type applyChangeJSON struct {
+	Component string `json:"component"`
+	Current   string `json:"current"`
+	Next      string `json:"next"`
+	Bump      string `json:"bump"`
+	File      string `json:"file"`
+	Tag       string `json:"tag,omitempty"`
+}
 
 const applyTestConfigText = `
 plans:
@@ -187,6 +203,182 @@ func TestApply_TagTemplateRenderedInOutput(t *testing.T) {
 	}
 	if !strings.Contains(applyStdout.String(), "cli-v1.3.0") {
 		t.Errorf("apply output missing rendered tag cli-v1.3.0:\n%s", applyStdout.String())
+	}
+}
+
+func TestApply_DryRunJSONEmitsObjectWithEmptyConsumed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	planPath := filepath.Join(plansDir, "2026-05-03-bump.yaml")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run --json: %v", err)
+	}
+
+	// Dry run must not write or consume.
+	got, _ := os.ReadFile(filepath.Join(dir, "VERSION"))
+	if string(got) != "1.2.3\n" {
+		t.Errorf("VERSION changed during dry-run: %q", got)
+	}
+	if _, err := os.Stat(planPath); err != nil {
+		t.Errorf("plan file consumed during dry-run: %v", err)
+	}
+
+	var report applyJSON
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("parse json: %v\nstdout: %s", err, stdout.String())
+	}
+	if len(report.Changes) != 1 {
+		t.Fatalf("changes len = %d, want 1", len(report.Changes))
+	}
+	c := report.Changes[0]
+	if c.Component != "cli" || c.Current != "1.2.3" || c.Next != "1.3.0" || c.Bump != "minor" || c.File != "VERSION" {
+		t.Errorf("change = %+v", c)
+	}
+	if c.Tag != "" {
+		t.Errorf("tag should be empty when no template configured, got %q", c.Tag)
+	}
+	if report.Consumed == nil || len(report.Consumed) != 0 {
+		t.Errorf("consumed = %v, want empty non-nil array", report.Consumed)
+	}
+	if !strings.Contains(stdout.String(), `"consumed": []`) {
+		t.Errorf("expected empty consumed array in raw JSON, got:\n%s", stdout.String())
+	}
+}
+
+func TestApply_LiveJSONListsConsumedAndSuppressesTrailer(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --json: %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "VERSION"))
+	if string(got) != "1.3.0\n" {
+		t.Errorf("VERSION after apply = %q, want 1.3.0\\n", got)
+	}
+
+	var report applyJSON
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("parse json: %v\nstdout: %s", err, stdout.String())
+	}
+	if !slices.Equal(report.Consumed, []string{"2026-05-03-bump.yaml"}) {
+		t.Errorf("consumed = %v, want [2026-05-03-bump.yaml]", report.Consumed)
+	}
+	if len(report.Changes) != 1 || report.Changes[0].Component != "cli" {
+		t.Errorf("changes = %+v", report.Changes)
+	}
+
+	// The text trailer "Wrote N file(s); consumed M plan(s)." must not leak into JSON stdout.
+	if strings.Contains(stdout.String(), "Wrote ") {
+		t.Errorf("stdout contains text trailer alongside JSON:\n%s", stdout.String())
+	}
+}
+
+func TestApply_JSONEmptyChangesAndConsumedWhenNothingPending(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := runVP(t, "apply", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --json: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"changes": []`) {
+		t.Errorf("expected empty changes array:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"consumed": []`) {
+		t.Errorf("expected empty consumed array:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "no version changes") {
+		t.Errorf("text-mode message leaked into JSON:\n%s", stdout.String())
+	}
+}
+
+func TestApply_LiveJSONIncludesTagWhenConfigured(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := applyTestConfigText + "    tag: \"cli-v{version}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run --json: %v", err)
+	}
+	var report applyJSON
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("parse json: %v", err)
+	}
+	if report.Changes[0].Tag != "cli-v1.3.0" {
+		t.Errorf("tag = %q, want cli-v1.3.0", report.Changes[0].Tag)
+	}
+}
+
+func TestApply_ArchiveModeJSONStillReportsConsumed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := strings.Replace(applyTestConfigText, "consumed: delete", "consumed: archive\n  archive_dir: .version-plans/archive", 1)
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --json: %v", err)
+	}
+	var report applyJSON
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("parse json: %v", err)
+	}
+	if !slices.Equal(report.Consumed, []string{"2026-05-03-bump.yaml"}) {
+		t.Errorf("consumed = %v, want [2026-05-03-bump.yaml] (basename, not archive path)", report.Consumed)
+	}
+}
+
+func TestApply_JSONUnknownComponentLeavesStdoutEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-typo.yaml", "releases:\n  nope: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--json")
+	assertUsageError(t, err)
+	if stdout.Len() != 0 {
+		t.Errorf("stdout should be empty when apply errors before printing JSON, got:\n%s", stdout.String())
 	}
 }
 

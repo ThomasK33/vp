@@ -11,6 +11,7 @@ import (
 
 	"github.com/ThomasK33/vp/internal/config"
 	"github.com/ThomasK33/vp/internal/git"
+	"github.com/ThomasK33/vp/internal/output"
 	"github.com/ThomasK33/vp/internal/plan"
 )
 
@@ -65,8 +66,24 @@ var checkCmd = &cobra.Command{
 			}
 		}
 
+		jsonOut, err := cmd.Flags().GetBool("json")
+		if err != nil {
+			return err
+		}
+
 		out := cmd.OutOrStdout()
-		printCheckReport(out, affected, sortedKeys(planned), missing)
+		plannedNames := sortedKeys(planned)
+		if jsonOut {
+			if err := output.WriteCheck(out, &output.CheckReport{
+				Affected: affected,
+				Planned:  plannedNames,
+				Missing:  missing,
+			}); err != nil {
+				return err
+			}
+		} else {
+			printCheckReport(out, affected, plannedNames, missing)
+		}
 		if len(missing) > 0 {
 			return checkError(fmt.Errorf("missing plan coverage for: %s", strings.Join(missing, ", ")))
 		}
@@ -104,5 +121,6 @@ func joinOrNone(s []string) string {
 func init() {
 	checkCmd.Flags().String("base", "", "git ref to compare from (required)")
 	checkCmd.Flags().String("head", "", "git ref to compare to (required)")
+	checkCmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout")
 	rootCmd.AddCommand(checkCmd)
 }
