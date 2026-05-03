@@ -171,3 +171,106 @@ func TestStatus_ErrorsWithoutConfig(t *testing.T) {
 	_, _, err := runVP(t, "status")
 	assertUsageError(t, err)
 }
+
+const statusTextConfig = `
+plans:
+  dir: .version-plans
+  consumed: delete
+components:
+  cli:
+    paths: ["cli/**"]
+    version: {file: VERSION, format: text}
+`
+
+func TestStatus_TextComponentShowsCurrentAndNext(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(statusTextConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "status")
+	if err != nil {
+		t.Fatalf("vp status: %v", err)
+	}
+	got := stdout.String()
+	summary := got[strings.Index(got, "Resolved bumps:"):]
+	if !strings.Contains(summary, "1.2.3") || !strings.Contains(summary, "1.3.0") {
+		t.Errorf("summary missing current/next versions:\n%s", summary)
+	}
+	if !strings.Contains(summary, "->") && !strings.Contains(summary, "→") {
+		t.Errorf("summary missing arrow between current and next:\n%s", summary)
+	}
+}
+
+func TestStatus_TextComponentNoneShowsCurrentOnly(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(statusTextConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-noop.yaml", "releases:\n  cli: none\n")
+
+	stdout, _, err := runVP(t, "status")
+	if err != nil {
+		t.Fatalf("vp status: %v", err)
+	}
+	summary := stdout.String()[strings.Index(stdout.String(), "Resolved bumps:"):]
+	if !strings.Contains(summary, "1.2.3") {
+		t.Errorf("summary missing current version: %s", summary)
+	}
+	if strings.Contains(summary, "->") || strings.Contains(summary, "→") {
+		t.Errorf("summary unexpectedly contains arrow for none bump: %s", summary)
+	}
+}
+
+func TestStatus_TextComponentMissingFileFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(statusTextConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// no VERSION file
+
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "status")
+	if err != nil {
+		t.Fatalf("vp status: %v", err)
+	}
+	summary := stdout.String()[strings.Index(stdout.String(), "Resolved bumps:"):]
+	if !strings.Contains(summary, "cli: minor") {
+		t.Errorf("summary missing fallback 'cli: minor':\n%s", summary)
+	}
+}
+
+func TestStatus_NonTextComponentUnchangedFormat(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStatusConfig(t, dir)
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "status")
+	if err != nil {
+		t.Fatalf("vp status: %v", err)
+	}
+	summary := stdout.String()[strings.Index(stdout.String(), "Resolved bumps:"):]
+	// cli is json format here; no arrow, no current/next.
+	if strings.Contains(summary, "->") || strings.Contains(summary, "→") {
+		t.Errorf("summary unexpectedly contains arrow for non-text component:\n%s", summary)
+	}
+	if !strings.Contains(summary, "cli: minor") {
+		t.Errorf("summary missing bare 'cli: minor':\n%s", summary)
+	}
+}

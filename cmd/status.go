@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThomasK33/vp/internal/config"
-	"github.com/ThomasK33/vp/internal/plan"
 	"github.com/ThomasK33/vp/internal/semver"
+	"github.com/ThomasK33/vp/internal/versionfile/text"
 )
 
 var statusCmd = &cobra.Command{
@@ -31,9 +31,9 @@ var statusCmd = &cobra.Command{
 			return err
 		}
 
-		pending, err := plan.LoadDir(cfg.Plans.Dir)
+		pending, collapsed, err := resolveBumps(cfg)
 		if err != nil {
-			return usageError(err)
+			return err
 		}
 
 		showAll, err := cmd.Flags().GetBool("all")
@@ -42,23 +42,6 @@ var statusCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
-
-		// Collect bumps in a first pass so an unknown component fails before
-		// any output is written.
-		levels := map[string][]semver.Bump{}
-		for _, p := range pending {
-			base := filepath.Base(p.Path)
-			for name, raw := range p.Plan.Releases {
-				if _, ok := cfg.Components[name]; !ok {
-					return usageError(fmt.Errorf("plan %s: unknown component %q", base, name))
-				}
-				b, err := semver.ParseBump(raw)
-				if err != nil {
-					return usageError(fmt.Errorf("plan %s: %w", base, err))
-				}
-				levels[name] = append(levels[name], b)
-			}
-		}
 
 		if len(pending) == 0 {
 			_, _ = fmt.Fprintln(out, "No pending plans.")
@@ -73,21 +56,48 @@ var statusCmd = &cobra.Command{
 			_, _ = fmt.Fprintln(out)
 		}
 		if len(pending) > 0 || showAll {
-			printSummary(out, cfg, levels, showAll)
+			printSummary(out, cfg, collapsed, showAll)
 		}
 		return nil
 	},
 }
 
-func printSummary(out io.Writer, cfg *config.Config, levels map[string][]semver.Bump, showAll bool) {
-	names := sortedKeys(levels)
+func printSummary(out io.Writer, cfg *config.Config, collapsed map[string]semver.Bump, showAll bool) {
+	names := sortedKeys(collapsed)
 	if showAll {
 		names = sortedKeys(cfg.Components)
 	}
 	_, _ = fmt.Fprintln(out, "Resolved bumps:")
 	for _, n := range names {
-		_, _ = fmt.Fprintf(out, "  %s: %s\n", n, semver.Collapse(levels[n]))
+		level := collapsed[n]
+		if level == "" {
+			level = semver.BumpNone
+		}
+		_, _ = fmt.Fprintf(out, "  %s\n", formatSummaryLine(cfg, n, level))
 	}
+}
+
+// formatSummaryLine renders one resolved-bump row. For text-format components
+// it appends current/next version info; for any other format (or when reading
+// the version file fails) it falls back to the bare "name: bump" form.
+func formatSummaryLine(cfg *config.Config, name string, level semver.Bump) string {
+	bare := fmt.Sprintf("%s: %s", name, level)
+	comp, ok := cfg.Components[name]
+	if !ok || comp.Version.Format != config.FormatText {
+		return bare
+	}
+	cur, err := text.Read(comp.Version.File)
+	if err != nil {
+		return bare
+	}
+	if level == semver.BumpNone {
+		return fmt.Sprintf("%s (%s)", bare, cur)
+	}
+	next, err := semver.Next(cur, level)
+	if err != nil {
+		return bare
+	}
+	return fmt.Sprintf("%s (%s -> %s)", bare, cur, next)
 }
 
 func sortedKeys[V any](m map[string]V) []string {
