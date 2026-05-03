@@ -91,10 +91,48 @@ func TestApply_AllNoneConsumesPlansWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestApply_RejectsArchiveConsumptionMode(t *testing.T) {
+func TestApply_ArchiveModeMovesPlansToArchiveDir(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	cfg := strings.Replace(applyTestConfigText, "consumed: delete", "consumed: archive\n  archive_dir: .version-plans/archive", 1)
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	versionPath := filepath.Join(dir, "VERSION")
+	if err := os.WriteFile(versionPath, []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	if _, _, err := runVP(t, "apply"); err != nil {
+		t.Fatalf("vp apply: %v", err)
+	}
+
+	got, err := os.ReadFile(versionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "1.3.0\n" {
+		t.Errorf("VERSION after apply = %q, want %q", got, "1.3.0\n")
+	}
+
+	if _, err := os.Stat(filepath.Join(plansDir, "2026-05-03-bump.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("plan still in plans dir after archive-mode apply: %v", err)
+	}
+	archivedPath := filepath.Join(plansDir, "archive", "2026-05-03-bump.yaml")
+	if _, err := os.Stat(archivedPath); err != nil {
+		t.Errorf("plan not found at archive path %s: %v", archivedPath, err)
+	}
+}
+
+func TestApply_ArchiveModeCreatesMissingArchiveDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Point archive_dir at a multi-level path that does not exist before apply.
+	archiveRel := "history/archive/plans"
+	cfg := strings.Replace(applyTestConfigText, "consumed: delete",
+		"consumed: archive\n  archive_dir: "+archiveRel, 1)
 	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,20 +142,141 @@ func TestApply_RejectsArchiveConsumptionMode(t *testing.T) {
 	plansDir := filepath.Join(dir, ".version-plans")
 	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
 
-	_, _, err := runVP(t, "apply")
-	if err == nil {
-		t.Fatal("vp apply: want error, got nil")
+	if _, err := os.Stat(filepath.Join(dir, archiveRel)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("precondition: archive dir already exists: %v", err)
 	}
-	if !strings.Contains(err.Error(), "archive") {
-		t.Errorf("error = %v, want it to mention archive", err)
+
+	if _, _, err := runVP(t, "apply"); err != nil {
+		t.Fatalf("vp apply: %v", err)
 	}
-	// Ensure no side effects.
-	got, _ := os.ReadFile(filepath.Join(dir, "VERSION"))
-	if string(got) != "1.2.3\n" {
-		t.Errorf("VERSION modified despite archive-mode rejection: %q", got)
+
+	archivedPath := filepath.Join(dir, archiveRel, "2026-05-03-bump.yaml")
+	if _, err := os.Stat(archivedPath); err != nil {
+		t.Errorf("plan not found at archive path %s: %v", archivedPath, err)
 	}
-	if _, err := os.Stat(filepath.Join(plansDir, "2026-05-03-bump.yaml")); err != nil {
-		t.Errorf("plan removed despite archive-mode rejection: %v", err)
+}
+
+func TestApply_TagTemplateRenderedInOutput(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := applyTestConfigText + "    tag: \"cli-v{version}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	dryStdout, _, err := runVP(t, "apply", "--dry-run")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run: %v", err)
+	}
+	dryOut := dryStdout.String()
+	if !strings.Contains(dryOut, "tag") {
+		t.Errorf("dry-run header missing tag column:\n%s", dryOut)
+	}
+	if !strings.Contains(dryOut, "cli-v1.3.0") {
+		t.Errorf("dry-run output missing rendered tag cli-v1.3.0:\n%s", dryOut)
+	}
+
+	applyStdout, _, err := runVP(t, "apply")
+	if err != nil {
+		t.Fatalf("vp apply: %v", err)
+	}
+	if !strings.Contains(applyStdout.String(), "cli-v1.3.0") {
+		t.Errorf("apply output missing rendered tag cli-v1.3.0:\n%s", applyStdout.String())
+	}
+}
+
+func TestRenderTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		version  string
+		want     string
+	}{
+		{"empty template returns empty", "", "1.2.3", ""},
+		{"version only", "{version}", "1.2.3", "1.2.3"},
+		{"prefix and version", "cli-v{version}", "1.2.3", "cli-v1.2.3"},
+		{"version repeated", "{version}+{version}", "0.1.0", "0.1.0+0.1.0"},
+		{"unknown placeholder left literal", "cli-{component}-v{version}", "2.0.0", "cli-{component}-v2.0.0"},
+		{"no placeholder", "static-tag", "9.9.9", "static-tag"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderTag(tt.template, tt.version)
+			if got != tt.want {
+				t.Errorf("renderTag(%q, %q) = %q, want %q", tt.template, tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApply_TagPreservesNonVersionPlaceholders(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := applyTestConfigText + "    tag: \"cli-{component}-v{version}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--dry-run")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "cli-{component}-v1.3.0") {
+		t.Errorf("rendered tag should leave {component} literal, got:\n%s", out)
+	}
+}
+
+func TestApply_NoTagColumnWhenNoComponentHasTag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--dry-run")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run: %v", err)
+	}
+	header, _, _ := strings.Cut(stdout.String(), "\n")
+	if strings.Contains(header, "tag") {
+		t.Errorf("dry-run header includes tag column when no component has tag set:\n%s", stdout.String())
+	}
+}
+
+func TestApply_DeleteModeStillDeletesPlans(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeApplyTextConfig(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plansDir := filepath.Join(dir, ".version-plans")
+	planPath := filepath.Join(plansDir, "2026-05-03-bump.yaml")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
+
+	if _, _, err := runVP(t, "apply"); err != nil {
+		t.Fatalf("vp apply: %v", err)
+	}
+
+	if _, err := os.Stat(planPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("plan should have been deleted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plansDir, "archive")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("delete mode unexpectedly created archive directory: %v", err)
 	}
 }
 
