@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/ThomasK33/vp/internal/config"
 )
 
@@ -27,10 +30,24 @@ func runVP(t *testing.T, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(nil)
 		rootCmd.SetErr(nil)
+		resetAllFlags(rootCmd)
 	})
 
 	err := rootCmd.Execute()
 	return &stdout, &stderr, err
+}
+
+// resetAllFlags walks the command tree and restores every flag to its declared
+// default. Cobra/pflag retain parsed flag values across Execute() calls on the
+// same command object, which leaks state between tests.
+func resetAllFlags(c *cobra.Command) {
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+	for _, sub := range c.Commands() {
+		resetAllFlags(sub)
+	}
 }
 
 func TestInit_RefusesWhenExistsInCWD(t *testing.T) {
