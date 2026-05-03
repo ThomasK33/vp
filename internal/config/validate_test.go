@@ -26,6 +26,7 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			name: "unknown plans.consumed",
 			yaml: `
 plans:
+  dir: .version-plans
   consumed: yeet
 components:
   cli:
@@ -35,9 +36,22 @@ components:
 			wantSubs: "plans.consumed",
 		},
 		{
+			name: "missing plans.dir",
+			yaml: `
+plans:
+  consumed: delete
+components:
+  cli:
+    paths: ["cli/**"]
+    version: {file: cli/package.json, format: json}
+`,
+			wantSubs: "plans.dir",
+		},
+		{
 			name: "archive without archive_dir",
 			yaml: `
 plans:
+  dir: .version-plans
   consumed: archive
 components:
   cli:
@@ -49,7 +63,7 @@ components:
 		{
 			name: "empty components",
 			yaml: `
-plans: {consumed: delete}
+plans: {dir: .version-plans, consumed: delete}
 components: {}
 `,
 			wantSubs: "components",
@@ -57,7 +71,7 @@ components: {}
 		{
 			name: "component without paths",
 			yaml: `
-plans: {consumed: delete}
+plans: {dir: .version-plans, consumed: delete}
 components:
   cli:
     version: {file: cli/package.json, format: json}
@@ -67,7 +81,7 @@ components:
 		{
 			name: "missing version.file",
 			yaml: `
-plans: {consumed: delete}
+plans: {dir: .version-plans, consumed: delete}
 components:
   cli:
     paths: ["cli/**"]
@@ -78,7 +92,7 @@ components:
 		{
 			name: "missing version.format",
 			yaml: `
-plans: {consumed: delete}
+plans: {dir: .version-plans, consumed: delete}
 components:
   cli:
     paths: ["cli/**"]
@@ -89,7 +103,7 @@ components:
 		{
 			name: "unknown version.format",
 			yaml: `
-plans: {consumed: delete}
+plans: {dir: .version-plans, consumed: delete}
 components:
   cli:
     paths: ["cli/**"]
@@ -104,8 +118,15 @@ components:
 			if err == nil {
 				t.Fatalf("Load: want error, got nil")
 			}
-			if !strings.Contains(err.Error(), tc.wantSubs) {
-				t.Errorf("error %q does not contain %q", err, tc.wantSubs)
+			// Strip the "<path>: " prefix that Load adds. The path may contain
+			// the subtest name (which includes the substring being matched), so
+			// matching against the unwrapped error is the only honest check.
+			msg := err.Error()
+			if i := strings.Index(msg, "vp.yaml: "); i >= 0 {
+				msg = msg[i+len("vp.yaml: "):]
+			}
+			if !strings.Contains(msg, tc.wantSubs) {
+				t.Errorf("error %q does not contain %q", msg, tc.wantSubs)
 			}
 		})
 	}
