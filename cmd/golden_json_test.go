@@ -75,6 +75,21 @@ func TestGolden_ApplyLive(t *testing.T) {
 	assertGoldenJSON(t, "apply-live.json", stdout.Bytes())
 }
 
+func TestGolden_ApplyMultiFormat(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeMultiFormatFixture(t, dir)
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml",
+		"releases:\n  txt: minor\n  js: patch\n  yml: major\n  tml: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--json")
+	if err != nil {
+		t.Fatalf("vp apply --json: %v", err)
+	}
+	assertGoldenJSON(t, "apply-multiformat.json", stdout.Bytes())
+}
+
 func TestGolden_ApplyEmpty(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
