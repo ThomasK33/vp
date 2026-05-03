@@ -34,6 +34,98 @@ components:
     version: {file: VERSION, format: text}
 `
 
+const applyMultiFormatVPYAML = `
+plans:
+  dir: .version-plans
+  consumed: delete
+components:
+  txt:
+    paths: ["txt/**"]
+    version: {file: txt/VERSION, format: text}
+  js:
+    paths: ["js/**"]
+    version: {file: js/package.json, format: json, path: version}
+  yml:
+    paths: ["yml/**"]
+    version: {file: yml/Chart.yaml, format: yaml, path: version}
+  tml:
+    paths: ["tml/**"]
+    version: {file: tml/Cargo.toml, format: toml, path: package.version}
+`
+
+const (
+	applyMultiFormatVERSIONBefore = "1.2.3\n"
+	applyMultiFormatVERSIONAfter  = "1.3.0\n"
+
+	applyMultiFormatPackageJSONBefore = `{
+  "name": "thing",
+  "version": "1.2.3",
+  "scripts": {
+    "build": "echo build"
+  }
+}
+`
+	applyMultiFormatPackageJSONAfter = `{
+  "name": "thing",
+  "version": "1.2.4",
+  "scripts": {
+    "build": "echo build"
+  }
+}
+`
+
+	applyMultiFormatChartYAMLBefore = `# Helm chart for thing
+apiVersion: v2
+name: thing
+version: 2.5.0
+description: example chart
+`
+	applyMultiFormatChartYAMLAfter = `# Helm chart for thing
+apiVersion: v2
+name: thing
+version: 3.0.0
+description: example chart
+`
+
+	applyMultiFormatCargoTOMLBefore = `# Rust crate
+[package]
+name = "thing"
+version = "0.4.1"
+
+[dependencies]
+serde = "1"
+`
+	applyMultiFormatCargoTOMLAfter = `# Rust crate
+[package]
+name = "thing"
+version = "0.5.0"
+
+[dependencies]
+serde = "1"
+`
+)
+
+func writeMultiFormatFixture(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(applyMultiFormatVPYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []struct{ rel, content string }{
+		{"txt/VERSION", applyMultiFormatVERSIONBefore},
+		{"js/package.json", applyMultiFormatPackageJSONBefore},
+		{"yml/Chart.yaml", applyMultiFormatChartYAMLBefore},
+		{"tml/Cargo.toml", applyMultiFormatCargoTOMLBefore},
+	} {
+		path := filepath.Join(dir, f.rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(f.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func writeApplyTextConfig(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(applyTestConfigText), 0o600); err != nil {
@@ -493,27 +585,6 @@ func TestApply_UnknownComponentInPlan(t *testing.T) {
 	}
 }
 
-func TestApply_RejectsNonTextFormatWithBump(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "vp.yaml"), []byte(statusTestConfig), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	plansDir := filepath.Join(dir, ".version-plans")
-	writePlanFile(t, plansDir, "2026-05-03-bump.yaml", "releases:\n  cli: minor\n")
-
-	_, _, err := runVP(t, "apply")
-	if err == nil {
-		t.Fatal("vp apply: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("error = %v, want it to mention 'not yet supported'", err)
-	}
-	if _, err := os.Stat(filepath.Join(plansDir, "2026-05-03-bump.yaml")); err != nil {
-		t.Errorf("plan removed despite Phase 1 failure: %v", err)
-	}
-}
-
 func TestApply_RejectsMissingVersionFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -588,5 +659,84 @@ func TestApply_HappyPathWritesAndConsumes(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+func TestApply_WritesAllSupportedFormats(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeMultiFormatFixture(t, dir)
+
+	plansDir := filepath.Join(dir, ".version-plans")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml",
+		"releases:\n  txt: minor\n  js: patch\n  yml: major\n  tml: minor\n")
+
+	if _, _, err := runVP(t, "apply"); err != nil {
+		t.Fatalf("vp apply: %v", err)
+	}
+
+	for _, f := range []struct{ rel, want string }{
+		{"txt/VERSION", applyMultiFormatVERSIONAfter},
+		{"js/package.json", applyMultiFormatPackageJSONAfter},
+		{"yml/Chart.yaml", applyMultiFormatChartYAMLAfter},
+		{"tml/Cargo.toml", applyMultiFormatCargoTOMLAfter},
+	} {
+		got, err := os.ReadFile(filepath.Join(dir, f.rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != f.want {
+			t.Errorf("%s after apply mismatch\n--- got ---\n%s\n--- want ---\n%s", f.rel, got, f.want)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(plansDir, "2026-05-03-bump.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("plan should have been consumed: %v", err)
+	}
+}
+
+func TestApply_DryRunReadsAllFormats(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeMultiFormatFixture(t, dir)
+
+	plansDir := filepath.Join(dir, ".version-plans")
+	planPath := filepath.Join(plansDir, "2026-05-03-bump.yaml")
+	writePlanFile(t, plansDir, "2026-05-03-bump.yaml",
+		"releases:\n  txt: minor\n  js: patch\n  yml: major\n  tml: minor\n")
+
+	stdout, _, err := runVP(t, "apply", "--dry-run")
+	if err != nil {
+		t.Fatalf("vp apply --dry-run: %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"txt", "1.2.3", "1.3.0",
+		"js", "1.2.4",
+		"yml", "2.5.0", "3.0.0",
+		"tml", "0.4.1", "0.5.0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run stdout missing %q\n---\n%s", want, out)
+		}
+	}
+
+	for _, f := range []struct{ rel, want string }{
+		{"txt/VERSION", applyMultiFormatVERSIONBefore},
+		{"js/package.json", applyMultiFormatPackageJSONBefore},
+		{"yml/Chart.yaml", applyMultiFormatChartYAMLBefore},
+		{"tml/Cargo.toml", applyMultiFormatCargoTOMLBefore},
+	} {
+		got, err := os.ReadFile(filepath.Join(dir, f.rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != f.want {
+			t.Errorf("%s changed during dry-run\n--- got ---\n%s", f.rel, got)
+		}
+	}
+	if _, err := os.Stat(planPath); err != nil {
+		t.Errorf("plan file consumed during dry-run: %v", err)
 	}
 }

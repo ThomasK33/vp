@@ -16,7 +16,10 @@ import (
 	"github.com/ThomasK33/vp/internal/output"
 	"github.com/ThomasK33/vp/internal/plan"
 	"github.com/ThomasK33/vp/internal/semver"
+	jsonvf "github.com/ThomasK33/vp/internal/versionfile/json"
 	"github.com/ThomasK33/vp/internal/versionfile/text"
+	tomlvf "github.com/ThomasK33/vp/internal/versionfile/toml"
+	yamlvf "github.com/ThomasK33/vp/internal/versionfile/yaml"
 )
 
 type plannedChange struct {
@@ -25,6 +28,8 @@ type plannedChange struct {
 	current string
 	next    string
 	file    string
+	format  string
+	path    string
 	tag     string
 }
 
@@ -81,7 +86,20 @@ var applyCmd = &cobra.Command{
 		}
 
 		for _, ch := range changes {
-			if err := text.Write(ch.file, ch.next); err != nil {
+			var err error
+			switch ch.format {
+			case config.FormatText:
+				err = text.Write(ch.file, ch.next)
+			case config.FormatJSON:
+				err = jsonvf.Write(ch.file, ch.path, ch.next)
+			case config.FormatYAML:
+				err = yamlvf.Write(ch.file, ch.path, ch.next)
+			case config.FormatTOML:
+				err = tomlvf.Write(ch.file, ch.path, ch.next)
+			default:
+				return fmt.Errorf("component %q: unsupported version format %q", ch.name, ch.format)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -131,13 +149,22 @@ func planChanges(cfg *config.Config, collapsed map[string]semver.Bump) ([]planne
 			continue
 		}
 		comp := cfg.Components[name]
-		if comp.Version.Format != config.FormatText {
-			return nil, fmt.Errorf(
-				"component %q: version file format %q not yet supported (text only in this release)",
-				name, comp.Version.Format,
-			)
+		var (
+			cur string
+			err error
+		)
+		switch comp.Version.Format {
+		case config.FormatText:
+			cur, err = text.Read(comp.Version.File)
+		case config.FormatJSON:
+			cur, err = jsonvf.Read(comp.Version.File, comp.Version.Path)
+		case config.FormatYAML:
+			cur, err = yamlvf.Read(comp.Version.File, comp.Version.Path)
+		case config.FormatTOML:
+			cur, err = tomlvf.Read(comp.Version.File, comp.Version.Path)
+		default:
+			return nil, fmt.Errorf("component %q: unsupported version format %q", name, comp.Version.Format)
 		}
-		cur, err := text.Read(comp.Version.File)
 		if err != nil {
 			return nil, err
 		}
@@ -151,6 +178,8 @@ func planChanges(cfg *config.Config, collapsed map[string]semver.Bump) ([]planne
 			current: cur,
 			next:    next,
 			file:    comp.Version.File,
+			format:  comp.Version.Format,
+			path:    comp.Version.Path,
 			tag:     renderTag(comp.Tag, next),
 		})
 	}

@@ -132,13 +132,6 @@ Resolved bumps:
   rust-agent: none (0.9.0)
 ```
 
-> **Known limitation (v0.x).** `vp apply` currently writes only
-> text-format version files. Read paths for `json`/`yaml`/`toml`
-> already work — `vp status` will show current and next versions for
-> all four — but applying writes is on the roadmap. Until then, use
-> `text`-format version files (e.g. a one-line `VERSION` file per
-> component) for components you intend to release with `vp apply`.
-
 ## Release flow with a separate changelog tool
 
 `vp` prints intended tag strings; your release pipeline executes them.
