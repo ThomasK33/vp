@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThomasK33/vp/internal/config"
+	"github.com/ThomasK33/vp/internal/output"
 	"github.com/ThomasK33/vp/internal/plan"
 	"github.com/ThomasK33/vp/internal/semver"
 	"github.com/ThomasK33/vp/internal/versionfile/text"
@@ -57,17 +58,26 @@ var applyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		jsonOut, err := cmd.Flags().GetBool("json")
+		if err != nil {
+			return err
+		}
 
 		out := cmd.OutOrStdout()
 		if dryRun {
+			if jsonOut {
+				return output.WriteApply(out, applyReport(cfg, changes, nil))
+			}
 			renderDryRun(out, cfg, changes)
 			return nil
 		}
 
-		if len(changes) == 0 {
-			_, _ = fmt.Fprintln(out, "no version changes")
-		} else {
-			renderApplied(out, cfg, changes)
+		if !jsonOut {
+			if len(changes) == 0 {
+				_, _ = fmt.Fprintln(out, "no version changes")
+			} else {
+				renderApplied(out, cfg, changes)
+			}
 		}
 
 		for _, ch := range changes {
@@ -79,9 +89,35 @@ var applyCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOut {
+			return output.WriteApply(out, applyReport(cfg, changes, pending))
+		}
 		_, _ = fmt.Fprintf(out, "Wrote %d file(s); consumed %d plan(s).\n", len(changes), len(pending))
 		return nil
 	},
+}
+
+// applyReport builds the JSON payload for both dry-run and live apply.
+// Pass consumed=nil for dry-run; the result's Consumed array is then empty.
+func applyReport(cfg *config.Config, changes []plannedChange, consumed []plan.Pending) *output.ApplyReport {
+	r := &output.ApplyReport{
+		Changes:  make([]output.Change, 0, len(changes)),
+		Consumed: []string{},
+	}
+	for _, ch := range changes {
+		r.Changes = append(r.Changes, output.Change{
+			Component: ch.name,
+			Current:   ch.current,
+			Next:      ch.next,
+			Bump:      string(ch.bump),
+			File:      relPath(cfg.Dir, ch.file),
+			Tag:       ch.tag,
+		})
+	}
+	for _, p := range consumed {
+		r.Consumed = append(r.Consumed, filepath.Base(p.Path))
+	}
+	return r
 }
 
 // planChanges turns collapsed bumps into plannedChange entries, validating
@@ -201,5 +237,6 @@ func relPath(base, p string) string {
 
 func init() {
 	applyCmd.Flags().Bool("dry-run", false, "show planned changes without writing files or consuming plans")
+	applyCmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout")
 	rootCmd.AddCommand(applyCmd)
 }

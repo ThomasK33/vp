@@ -1,0 +1,14 @@
+{
+  "changes": [
+    {
+      "component": "cli",
+      "current": "1.2.3",
+      "next": "1.3.0",
+      "bump": "minor",
+      "file": "VERSION"
+    }
+  ],
+  "consumed": [
+    "2026-05-03-bump.yaml"
+  ]
+}
