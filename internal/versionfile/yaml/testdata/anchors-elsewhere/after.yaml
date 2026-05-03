@@ -1,0 +1,16 @@
+apiVersion: v2
+name: example
+version: 1.2.4
+defaults: &defaults
+  image: registry.example.com/example
+  pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+dev:
+  <<: *defaults
+  replicas: 1
+prod:
+  <<: *defaults
+  replicas: 3

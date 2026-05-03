@@ -1,0 +1,7 @@
+name: workspace
+package:
+  name: inner
+  version: 0.1.0
+  description: nested example
+extra:
+  unrelated: value

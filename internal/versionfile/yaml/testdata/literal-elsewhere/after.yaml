@@ -1,0 +1,11 @@
+apiVersion: v2
+name: example
+version: 1.2.4
+description: |
+  A multi-line description that uses the literal block style.
+  Newlines and indentation must be preserved exactly.
+
+      Including this indented block.
+maintainers:
+  - name: Platform Team
+    email: platform@example.com
