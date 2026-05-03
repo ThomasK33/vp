@@ -132,6 +132,26 @@ Resolved bumps:
   rust-agent: none (0.9.0)
 ```
 
+## Dogfooding: vp manages its own version
+
+This repo's [`vp.yaml`](./vp.yaml) is the smallest possible real-world
+example — one component, one text file, one tag template:
+
+```yaml
+components:
+  vp:
+    paths: ["cmd/**", "internal/**", "main.go", "go.mod", "go.sum"]
+    version:
+      file: internal/version/VERSION
+      format: text
+    tag: "v{version}"
+```
+
+The string reported by `vp --version` is the contents of
+[`internal/version/VERSION`](./internal/version/VERSION), embedded into
+the binary via `//go:embed`. Cutting a release is `vp add vp <bump>`
+→ `vp apply` → commit → tag — goreleaser does the rest.
+
 ## Release flow with a separate changelog tool
 
 `vp` prints intended tag strings; your release pipeline executes them.

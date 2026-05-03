@@ -1,0 +1,17 @@
+# vp manages its own version. See README "Dogfooding" section.
+plans:
+  dir: .version-plans
+  consumed: delete
+
+components:
+  vp:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "main.go"
+      - "go.mod"
+      - "go.sum"
+    version:
+      file: internal/version/VERSION
+      format: text
+    tag: "v{version}"
