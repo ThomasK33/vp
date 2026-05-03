@@ -2,6 +2,8 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/ThomasK33/vp/internal/version"
@@ -13,7 +15,10 @@ import (
 //	1 - vp check failure (missing plans)
 //	2 - usage / config error
 //	3 - runtime error
-const exitRuntimeError = 3
+const (
+	exitUsageError   = 2
+	exitRuntimeError = 3
+)
 
 var rootCmd = &cobra.Command{
 	Use:     "vp",
@@ -26,8 +31,12 @@ var rootCmd = &cobra.Command{
 
 // Execute runs the root command and returns the process exit code.
 func Execute() int {
-	if err := rootCmd.Execute(); err != nil {
-		return exitRuntimeError
+	err := rootCmd.Execute()
+	if err == nil {
+		return 0
 	}
-	return 0
+	if coded, ok := errors.AsType[*exitCodeError](err); ok {
+		return coded.code
+	}
+	return exitRuntimeError
 }
