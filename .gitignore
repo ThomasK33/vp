@@ -1,0 +1,14 @@
+# Built binaries
+/vp
+/vp.exe
+
+# GoReleaser output
+/dist/
+
+# Coverage
+coverage.out
+coverage.html
+
+# Editor / OS noise
+.DS_Store
+*.swp
