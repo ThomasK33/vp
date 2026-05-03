@@ -1,0 +1,12 @@
+version = "1.2.4"
+
+[server]
+host = "localhost"
+port = 8080
+
+[database]
+url = "postgres://localhost/demo"
+pool_size = 10
+
+[logging]
+level = "info"

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "demo"
+version = "1.2.4"
+description = "demo package"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
