@@ -1,0 +1,9 @@
+# Helm Chart for the example component.
+# Maintained by the platform team.
+
+apiVersion: v2
+name: example
+
+# Bumped on each release.
+version: 1.2.3 # pinned by release pipeline
+appVersion: "1.16.0" # upstream tag
