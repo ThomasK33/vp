@@ -6,11 +6,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ThomasK33/vp/internal/config"
+	"github.com/ThomasK33/vp/internal/plan"
 	"github.com/ThomasK33/vp/internal/semver"
 	"github.com/ThomasK33/vp/internal/versionfile/text"
 )
@@ -21,6 +24,7 @@ type plannedChange struct {
 	current string
 	next    string
 	file    string
+	tag     string
 }
 
 var applyCmd = &cobra.Command{
@@ -37,10 +41,6 @@ var applyCmd = &cobra.Command{
 				return usageError(err)
 			}
 			return err
-		}
-
-		if cfg.Plans.Consumed == config.ConsumedArchive {
-			return errors.New("archive consumption mode not yet implemented (planned for a later release)")
 		}
 
 		pending, collapsed, err := resolveBumps(cfg)
@@ -75,10 +75,8 @@ var applyCmd = &cobra.Command{
 				return err
 			}
 		}
-		for _, p := range pending {
-			if err := os.Remove(p.Path); err != nil {
-				return err
-			}
+		if err := consumePlans(cfg, pending); err != nil {
+			return err
 		}
 
 		_, _ = fmt.Fprintf(out, "Wrote %d file(s); consumed %d plan(s).\n", len(changes), len(pending))
@@ -117,6 +115,7 @@ func planChanges(cfg *config.Config, collapsed map[string]semver.Bump) ([]planne
 			current: cur,
 			next:    next,
 			file:    comp.Version.File,
+			tag:     renderTag(comp.Tag, next),
 		})
 	}
 	return changes, nil
@@ -127,22 +126,69 @@ func renderDryRun(out io.Writer, cfg *config.Config, changes []plannedChange) {
 		_, _ = fmt.Fprintln(out, "no version changes")
 		return
 	}
+	withTag := hasTag(changes)
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "component\tcurrent\tnext\tbump\tfile")
+	header := "component\tcurrent\tnext\tbump\tfile"
+	if withTag {
+		header += "\ttag"
+	}
+	_, _ = fmt.Fprintln(tw, header)
 	for _, ch := range changes {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s",
 			ch.name, ch.current, ch.next, ch.bump, relPath(cfg.Dir, ch.file))
+		if withTag {
+			_, _ = fmt.Fprintf(tw, "\t%s", ch.tag)
+		}
+		_, _ = fmt.Fprintln(tw)
 	}
 	_ = tw.Flush()
 }
 
 func renderApplied(out io.Writer, cfg *config.Config, changes []plannedChange) {
+	withTag := hasTag(changes)
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, ch := range changes {
-		_, _ = fmt.Fprintf(tw, "%s\t%s -> %s\t(%s)\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s -> %s\t(%s)\t%s",
 			ch.name, ch.current, ch.next, ch.bump, relPath(cfg.Dir, ch.file))
+		if withTag {
+			_, _ = fmt.Fprintf(tw, "\t%s", ch.tag)
+		}
+		_, _ = fmt.Fprintln(tw)
 	}
 	_ = tw.Flush()
+}
+
+// renderTag is intentionally a single-placeholder substitution, not a template
+// language: any {xxx} other than {version} is left literal.
+func renderTag(template, version string) string {
+	return strings.ReplaceAll(template, "{version}", version)
+}
+
+func hasTag(changes []plannedChange) bool {
+	return slices.ContainsFunc(changes, func(c plannedChange) bool { return c.tag != "" })
+}
+
+func consumePlans(cfg *config.Config, pending []plan.Pending) error {
+	switch cfg.Plans.Consumed {
+	case config.ConsumedArchive:
+		if err := os.MkdirAll(cfg.Plans.ArchiveDir, 0o755); err != nil {
+			return err
+		}
+		for _, p := range pending {
+			dst := filepath.Join(cfg.Plans.ArchiveDir, filepath.Base(p.Path))
+			if err := os.Rename(p.Path, dst); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		for _, p := range pending {
+			if err := os.Remove(p.Path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 func relPath(base, p string) string {
