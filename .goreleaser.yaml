@@ -1,0 +1,44 @@
+version: 2
+
+project_name: vp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: vp
+    main: .
+    binary: vp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/ThomasK33/vp/internal/version.Version={{.Version}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: vp
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+release:
+  draft: false
+  prerelease: auto
