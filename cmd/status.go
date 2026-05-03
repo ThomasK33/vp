@@ -61,16 +61,16 @@ var statusCmd = &cobra.Command{
 		}
 
 		if len(pending) == 0 {
-			fmt.Fprintln(out, "No pending plans.")
+			_, _ = fmt.Fprintln(out, "No pending plans.")
 		} else {
-			fmt.Fprintln(out, "Pending plans:")
+			_, _ = fmt.Fprintln(out, "Pending plans:")
 			for _, p := range pending {
-				fmt.Fprintf(out, "  %s\n", filepath.Base(p.Path))
+				_, _ = fmt.Fprintf(out, "  %s\n", filepath.Base(p.Path))
 				for _, n := range sortedKeys(p.Plan.Releases) {
-					fmt.Fprintf(out, "    %s: %s\n", n, p.Plan.Releases[n])
+					_, _ = fmt.Fprintf(out, "    %s: %s\n", n, p.Plan.Releases[n])
 				}
 			}
-			fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out)
 		}
 		if len(pending) > 0 || showAll {
 			printSummary(out, cfg, levels, showAll)
@@ -84,9 +84,9 @@ func printSummary(out io.Writer, cfg *config.Config, levels map[string][]semver.
 	if showAll {
 		names = sortedKeys(cfg.Components)
 	}
-	fmt.Fprintln(out, "Resolved bumps:")
+	_, _ = fmt.Fprintln(out, "Resolved bumps:")
 	for _, n := range names {
-		fmt.Fprintf(out, "  %s: %s\n", n, semver.Collapse(levels[n]))
+		_, _ = fmt.Fprintf(out, "  %s: %s\n", n, semver.Collapse(levels[n]))
 	}
 }
 

@@ -5,6 +5,7 @@ import "fmt"
 // Bump is a semver level: none, patch, minor, or major.
 type Bump string
 
+// Bump levels, ordered from no-op to most disruptive.
 const (
 	BumpNone  Bump = "none"
 	BumpPatch Bump = "patch"
