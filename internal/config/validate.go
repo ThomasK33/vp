@@ -19,6 +19,9 @@ const (
 // validate enforces the rules from the PRD acceptance criteria. It mutates cfg
 // only to apply defaults (plans.consumed defaults to "delete" when blank).
 func validate(cfg *Config) error {
+	if cfg.Plans.Dir == "" {
+		return fmt.Errorf("plans.dir: required")
+	}
 	if cfg.Plans.Consumed == "" {
 		cfg.Plans.Consumed = ConsumedDelete
 	}
