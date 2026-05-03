@@ -17,3 +17,8 @@ func (e *exitCodeError) Unwrap() error { return e.err }
 func usageError(err error) error {
 	return &exitCodeError{code: exitUsageError, err: err}
 }
+
+// checkError wraps err so Execute() exits with the vp-check failure code (1).
+func checkError(err error) error {
+	return &exitCodeError{code: exitCheckError, err: err}
+}

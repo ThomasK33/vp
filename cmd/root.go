@@ -16,6 +16,7 @@ import (
 //	2 - usage / config error
 //	3 - runtime error
 const (
+	exitCheckError   = 1
 	exitUsageError   = 2
 	exitRuntimeError = 3
 )
