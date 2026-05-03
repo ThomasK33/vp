@@ -1,4 +1,5 @@
 [tools]
+communique = "1.1.2"
 go = "1.26.2"
 golangci-lint = "2.12.1"
 goreleaser = "2.15.4"

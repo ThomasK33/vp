@@ -5,8 +5,6 @@ A small, language-agnostic CLI for staging semver bump intent in Git.
 time. It deliberately does *not* generate changelogs, create git tags,
 or publish anything.
 
-> Status: pre-v0.1, under construction.
-
 ## What `vp` is not
 
 - **Not a changelog generator.** Pair `vp` with a tool like
